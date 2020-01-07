@@ -32,11 +32,11 @@
     "static", "suppors", "switch", "typedef", "typeof", "unchecked"
   ]);
 
-  let stringLiteral = /('.*')|(".*")/;
-  let hexLiteral    = /(hex)(("([0-9a-fA-F]{2})*")|'([0-9a-fA-F]{2})*')/;
+  let stringLiteral = /(['"])(.*)\1/;
+  let hexLiteral    = /(hex)(['"])(([0-9a-fA-F]{2})*)\2/;
   let identifier    = /[a-zA-Z_$][a-zA-Z_$0-9]*/;
-  let hexNumber     = /\-?(0x)[0-9a-fA-F]+(_?[0-9a-fA-F]+)*\b/;
-  let decimalNumber = /\-?[0-9](\.[0-9]*)?([eE][0-9]+)?/;
+  let hexNumber     = /^\-?(0x)[0-9a-fA-F]+(_?[0-9a-fA-F]+)*\b/;
+  let decimalNumber = /^\-?((\d+((_\d+)?)*)\.?(\d+((_\d+)?)*)*|\.(\d+((_\d+)?)*)+)[eE]?(\d+((_\d+)?)*)?\b/;
   let operators     = /[+\-*\/%&^|:=<>!~]+/;
 
   let atoms = wordRegexp(["true", "false"]);
@@ -70,32 +70,25 @@
   let builtinTypes = wordRegexp(typeList);
 
   function tokenBase(stream, state) {
-    let current = stream.current();
-
-    // Whitespace
-    if (stream.eatSpace()) return null;
 
     // Multi-line documentation
-    if (state.inMultiLineDoc) {
-      if (stream.match("*/")) {
-        state.inMultiLineDoc = false;
-        return "comment";
-      }
-      if (stream.match(natSpecTags)) return "tag";
-      stream.skipToEnd();
-      return "comment";
-    }
     if (stream.match("/**")) {
       state.inMultiLineDoc = true;
+      return "comment";
+    }
+    if (state.inMultiLineDoc) {
+      if (stream.match("*/")) {
+        state.inMultiLineDoc= false;
+        return "comment";
+      }
+      if (stream.match("*")) return "comment";
+      if (stream.match(natSpecTags)) return "tag";
+      stream.skipToEnd();
       return "comment";
     }
 
     // Single-line documentation
     if (state.inSingleLineDoc) {
-      if (stream.sol()) {
-        state.inSingleLineDoc = false;
-        return "comment";
-      }
       if (stream.match(natSpecTags)) return "tag";
       stream.skipToEnd();
       state.inSingleLineDoc = false;
@@ -126,12 +119,10 @@
       return "comment";
     }
 
-    // `payable` is a builtin keyword but `address payable` is a type
-    if (state.lastToken == "address" && stream.match("payable")) return "type";
     if (stream.match(builtinTypes)) return "type";
+    if (state.lastToken == "address" && stream.match("payable")) return "type";
 
-    if (stream.match(stringLiteral)) return "string";
-    if (stream.match(hexLiteral)) return "number";
+    if (stream.match(hexLiteral) || stream.match(stringLiteral)) return "string";
     if (stream.match(hexNumber) || stream.match(decimalNumber)) return "number";
 
     if (stream.match(operators)) return "operator";
@@ -151,15 +142,11 @@
     if (stream.match(numberUnits)) return "keyword";
     if (stream.match(reserved)) return "keyword";
 
-    // Global variables and their properties
     if (stream.match(globalVariables)) return "keyword";
-    if (state.lastToken === "abi." && stream.match(abiMembers)) return "keyword";
-    if (state.lastToken === "block." && stream.match(blockMembers)) return "keyword";
-    if (state.lastToken === "msg." && stream.match(msgMembers)) return "keyword";
-    if (state.lastToken === "tx." && stream.match(txMembers)) return "keyword";
-
-    // Property
-    if (state.lastToken === ".") return "property";
+    if (state.lastToken === "abi" && stream.match(abiMembers)) return "keyword";
+    if (state.lastToken === "block" && stream.match(blockMembers)) return "keyword";
+    if (state.lastToken === "msg" && stream.match(msgMembers)) return "keyword";
+    if (state.lastToken === "tx" && stream.match(txMembers)) return "keyword";
 
     // Others
     if (stream.match(identifier)) return "variable";
@@ -184,21 +171,27 @@
       },
 
       token: function(stream, state) {
+        if (stream.sol() && state.inSingleLineDoc) {
+          state.inSingleLineDoc = false;
+        }
+
+        if (stream.eatSpace()) return null;
+
         let style = state.tokenize(stream, state);
         let current = stream.current();
 
-        if (globalVariables.test(state.lastToken) && current == ".") {
-          state.lastToken += current;
-        } else if (current && style){
+        if (current && style) {
           state.lastToken = current;
         }
 
         return style;
       },
 
+      electricInput: /^\s*[\}\]\)]$/,
       lineComment: "//",
       blockCommentStart: "/*",
-      blockCommentEnd: "*/"
+      blockCommentEnd: "*/",
+      fold: "brace"
     }
   });
 
